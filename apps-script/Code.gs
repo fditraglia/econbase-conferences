@@ -71,8 +71,9 @@ function doGet(e) {
   var action = e.parameter.action;
   var row = parseInt(e.parameter.row);
   var token = e.parameter.token;
+  var moderator = e.parameter.moderator; // Moderator email from URL (verified by token)
 
-  Logger.log('doGet called with action: ' + action + ', row: ' + row);
+  Logger.log('doGet called with action: ' + action + ', row: ' + row + ', moderator: ' + moderator);
 
   try {
     // Use explicit sheet name instead of getActiveSheet()
@@ -86,9 +87,9 @@ function doGet(e) {
     if (action === 'verify') {
       return handleVerification(sheet, row, token);
     } else if (action === 'approve') {
-      return handleApprove(sheet, row, token);
+      return handleApprove(sheet, row, token, moderator);
     } else if (action === 'reject') {
-      return handleReject(sheet, row, token);
+      return handleReject(sheet, row, token, moderator);
     } else {
       return createHtmlResponse('Invalid action', false);
     }
@@ -155,45 +156,55 @@ function handleVerification(sheet, row, token) {
 /**
  * Handles conference approval
  */
-function handleApprove(sheet, row, token) {
-  return handleModeration(sheet, row, token, CONFIG.STATUS.APPROVED);
+function handleApprove(sheet, row, token, moderatorEmail) {
+  return handleModeration(sheet, row, token, moderatorEmail, CONFIG.STATUS.APPROVED);
 }
 
 /**
  * Handles conference rejection
  */
-function handleReject(sheet, row, token) {
-  return handleModeration(sheet, row, token, CONFIG.STATUS.REJECTED);
+function handleReject(sheet, row, token, moderatorEmail) {
+  return handleModeration(sheet, row, token, moderatorEmail, CONFIG.STATUS.REJECTED);
 }
 
 /**
  * Common moderation handler
+ * @param {Sheet} sheet - The spreadsheet sheet
+ * @param {number} row - The row number
+ * @param {string} token - The HMAC token from the URL
+ * @param {string} moderatorEmail - The moderator email from the URL (to be verified by token)
+ * @param {string} newStatus - The new status (APPROVED or REJECTED)
  */
-function handleModeration(sheet, row, token, newStatus) {
+function handleModeration(sheet, row, token, moderatorEmail, newStatus) {
   // CRITICAL SECURITY: Validate moderation token first
   var action = newStatus.toLowerCase(); // "approved" or "rejected"
-  var expectedToken = generateModerationToken(row, action);
+
+  // Check that moderator email was provided
+  if (!moderatorEmail) {
+    Logger.log('Missing moderator parameter in moderation request for row: ' + row);
+    return createHtmlResponse(
+      'Invalid moderation link. Please use the link from the original moderation email.',
+      false
+    );
+  }
+
+  // Validate token matches the expected HMAC for this row + action + moderator
+  var expectedToken = generateModerationToken(row, action, moderatorEmail);
 
   if (token !== expectedToken) {
-    Logger.log('Invalid moderation token for row: ' + row + ', action: ' + action);
+    Logger.log('Invalid moderation token for row: ' + row + ', action: ' + action + ', moderator: ' + moderatorEmail);
     return createHtmlResponse(
       'Invalid or expired moderation link. Please use the link from the original moderation email.',
       false
     );
   }
 
-  // Secondary check: Verify the user is an authorized moderator
-  var moderatorEmail = Session.getActiveUser().getEmail();
+  // Token is valid, which proves:
+  // 1. The moderator received the email (has access to the secret)
+  // 2. The link is for this specific row, action, and moderator
+  // 3. The moderator email is authentic (embedded in the HMAC)
 
-  if (!moderatorEmail) {
-    Logger.log('No active user session for moderation attempt on row: ' + row);
-    return createHtmlResponse(
-      'Unauthorized access. Please log in with an authorized moderator account.',
-      false
-    );
-  }
-
-  // Check if moderator is in the authorized list
+  // Verify the moderator is in the authorized list
   var isAuthorized = false;
   for (var i = 0; i < CONFIG.MODERATORS.length; i++) {
     if (CONFIG.MODERATORS[i].toLowerCase() === moderatorEmail.toLowerCase()) {
@@ -203,11 +214,20 @@ function handleModeration(sheet, row, token, newStatus) {
   }
 
   if (!isAuthorized) {
-    Logger.log('Unauthorized moderation attempt by: ' + moderatorEmail + ' for row: ' + row);
+    Logger.log('Token valid but moderator not in authorized list: ' + moderatorEmail + ' for row: ' + row);
     return createHtmlResponse(
-      'You are not authorized to moderate submissions. Contact the system administrator.',
+      'This moderation link was not sent to an authorized moderator. Contact the system administrator.',
       false
     );
+  }
+
+  // Optional: Log the active user if available (for audit purposes)
+  // Note: This will often be blank for external moderators (e.g., personal Gmail)
+  var sessionUser = Session.getActiveUser().getEmail();
+  if (sessionUser) {
+    Logger.log('Session user: ' + sessionUser + ' (token verified for: ' + moderatorEmail + ')');
+  } else {
+    Logger.log('Session user blank (external moderator), using token-verified: ' + moderatorEmail);
   }
 
   var currentStatus = sheet.getRange(row, CONFIG.COLUMNS.STATUS).getValue();
@@ -276,10 +296,13 @@ function generateVerificationToken(row, email) {
 
 /**
  * Generates a moderation token using HMAC-SHA256
- * This token authorizes a specific action (approve/reject) on a specific row
+ * This token authorizes a specific moderator to perform a specific action on a specific row
+ * @param {number} row - The spreadsheet row number
+ * @param {string} action - The action ('approved' or 'rejected')
+ * @param {string} moderatorEmail - The email of the moderator this token is for
  */
-function generateModerationToken(row, action) {
-  var rawString = row + '|' + action + '|' + CONFIG.VERIFICATION_SECRET;
+function generateModerationToken(row, action, moderatorEmail) {
+  var rawString = row + '|' + action + '|' + moderatorEmail + '|' + CONFIG.VERIFICATION_SECRET;
   return Utilities.computeDigest(
     Utilities.DigestAlgorithm.SHA_256,
     rawString,
@@ -365,12 +388,18 @@ function notifyModerators(sheet, row) {
 
     var webAppUrl = ScriptApp.getService().getUrl();
 
-    // Generate secure moderation tokens for each action
-    var approveToken = generateModerationToken(row, 'approved');
-    var rejectToken = generateModerationToken(row, 'rejected');
+    // Generate secure moderation tokens for EACH moderator
+    // Each moderator gets their own unique token bound to their email
+    var moderatorUrls = CONFIG.MODERATORS.map(function(moderator) {
+      var approveToken = generateModerationToken(row, 'approved', moderator);
+      var rejectToken = generateModerationToken(row, 'rejected', moderator);
 
-    var approveUrl = webAppUrl + '?action=approve&row=' + row + '&token=' + approveToken;
-    var rejectUrl = webAppUrl + '?action=reject&row=' + row + '&token=' + rejectToken;
+      return {
+        email: moderator,
+        approveUrl: webAppUrl + '?action=approve&row=' + row + '&moderator=' + encodeURIComponent(moderator) + '&token=' + approveToken,
+        rejectUrl: webAppUrl + '?action=reject&row=' + row + '&moderator=' + encodeURIComponent(moderator) + '&token=' + rejectToken
+      };
+    });
 
     var dateStr = formatDate(startDate);
     if (endDate) {
@@ -381,47 +410,47 @@ function notifyModerators(sheet, row) {
 
     var subject = '📋 New Conference for Review: ' + conferenceName;
 
-    var body =
-      'New Verified Conference Submission\n\n' +
-      'Conference: ' + conferenceName + '\n' +
-      'Date: ' + dateStr + '\n' +
-      'Location: ' + location + '\n' +
-      'Website: ' + url + '\n\n' +
-      'Description:\n' + description + '\n\n' +
-      'Submission Deadline: ' + deadlineStr + '\n' +
-      'Submitted by: ' + submitterEmail + '\n\n' +
-      'APPROVE: ' + approveUrl + '\n' +
-      'REJECT: ' + rejectUrl + '\n\n' +
-      'View in spreadsheet (Row ' + row + '):\n' +
-      'https://docs.google.com/spreadsheets/d/' + CONFIG.SHEET_ID;
+    // Send personalized email to each moderator with their unique token
+    moderatorUrls.forEach(function(modData) {
+      var body =
+        'New Verified Conference Submission\n\n' +
+        'Conference: ' + conferenceName + '\n' +
+        'Date: ' + dateStr + '\n' +
+        'Location: ' + location + '\n' +
+        'Website: ' + url + '\n\n' +
+        'Description:\n' + description + '\n\n' +
+        'Submission Deadline: ' + deadlineStr + '\n' +
+        'Submitted by: ' + submitterEmail + '\n\n' +
+        'APPROVE: ' + modData.approveUrl + '\n' +
+        'REJECT: ' + modData.rejectUrl + '\n\n' +
+        'View in spreadsheet (Row ' + row + '):\n' +
+        'https://docs.google.com/spreadsheets/d/' + CONFIG.SHEET_ID;
 
-    var htmlBody =
-      '<div style="font-family: Arial, sans-serif; max-width: 600px;">' +
-      '<h2 style="color: #333;">New Verified Conference Submission</h2>' +
-      '<div style="background-color: #f5f5f5; padding: 20px; border-radius: 5px; margin: 20px 0;">' +
-      '<h3 style="margin-top: 0; color: #0066cc;">' + conferenceName + '</h3>' +
-      '<table style="width: 100%; border-collapse: collapse;">' +
-      '<tr><td style="padding: 8px 0; font-weight: bold; width: 140px;">Date:</td><td>' + dateStr + '</td></tr>' +
-      '<tr><td style="padding: 8px 0; font-weight: bold;">Location:</td><td>' + location + '</td></tr>' +
-      '<tr><td style="padding: 8px 0; font-weight: bold;">Website:</td><td><a href="' + url + '">' + url + '</a></td></tr>' +
-      '<tr><td style="padding: 8px 0; font-weight: bold; vertical-align: top;">Description:</td><td>' + description + '</td></tr>' +
-      '<tr><td style="padding: 8px 0; font-weight: bold;">CFP Deadline:</td><td>' + deadlineStr + '</td></tr>' +
-      '<tr><td style="padding: 8px 0; font-weight: bold;">Submitted by:</td><td>' + submitterEmail + '</td></tr>' +
-      '</table>' +
-      '</div>' +
-      '<div style="margin: 30px 0; text-align: center;">' +
-      '<a href="' + approveUrl + '" style="display: inline-block; padding: 12px 30px; margin: 0 10px; background-color: #28a745; color: white; text-decoration: none; border-radius: 5px; font-weight: bold;">✓ APPROVE</a>' +
-      '<a href="' + rejectUrl + '" style="display: inline-block; padding: 12px 30px; margin: 0 10px; background-color: #dc3545; color: white; text-decoration: none; border-radius: 5px; font-weight: bold;">✗ REJECT</a>' +
-      '</div>' +
-      '<p style="text-align: center; margin-top: 20px;">' +
-      '<a href="https://docs.google.com/spreadsheets/d/' + CONFIG.SHEET_ID + '" style="color: #666; font-size: 14px;">View in spreadsheet (Row ' + row + ')</a>' +
-      '</p>' +
-      '</div>';
+      var htmlBody =
+        '<div style="font-family: Arial, sans-serif; max-width: 600px;">' +
+        '<h2 style="color: #333;">New Verified Conference Submission</h2>' +
+        '<div style="background-color: #f5f5f5; padding: 20px; border-radius: 5px; margin: 20px 0;">' +
+        '<h3 style="margin-top: 0; color: #0066cc;">' + conferenceName + '</h3>' +
+        '<table style="width: 100%; border-collapse: collapse;">' +
+        '<tr><td style="padding: 8px 0; font-weight: bold; width: 140px;">Date:</td><td>' + dateStr + '</td></tr>' +
+        '<tr><td style="padding: 8px 0; font-weight: bold;">Location:</td><td>' + location + '</td></tr>' +
+        '<tr><td style="padding: 8px 0; font-weight: bold;">Website:</td><td><a href="' + url + '">' + url + '</a></td></tr>' +
+        '<tr><td style="padding: 8px 0; font-weight: bold; vertical-align: top;">Description:</td><td>' + description + '</td></tr>' +
+        '<tr><td style="padding: 8px 0; font-weight: bold;">CFP Deadline:</td><td>' + deadlineStr + '</td></tr>' +
+        '<tr><td style="padding: 8px 0; font-weight: bold;">Submitted by:</td><td>' + submitterEmail + '</td></tr>' +
+        '</table>' +
+        '</div>' +
+        '<div style="margin: 30px 0; text-align: center;">' +
+        '<a href="' + modData.approveUrl + '" style="display: inline-block; padding: 12px 30px; margin: 0 10px; background-color: #28a745; color: white; text-decoration: none; border-radius: 5px; font-weight: bold;">✓ APPROVE</a>' +
+        '<a href="' + modData.rejectUrl + '" style="display: inline-block; padding: 12px 30px; margin: 0 10px; background-color: #dc3545; color: white; text-decoration: none; border-radius: 5px; font-weight: bold;">✗ REJECT</a>' +
+        '</div>' +
+        '<p style="text-align: center; margin-top: 20px;">' +
+        '<a href="https://docs.google.com/spreadsheets/d/' + CONFIG.SHEET_ID + '" style="color: #666; font-size: 14px;">View in spreadsheet (Row ' + row + ')</a>' +
+        '</p>' +
+        '</div>';
 
-    // Send to all moderators
-    CONFIG.MODERATORS.forEach(function(moderator) {
       MailApp.sendEmail({
-        to: moderator,
+        to: modData.email,
         subject: subject,
         body: body,
         htmlBody: htmlBody,

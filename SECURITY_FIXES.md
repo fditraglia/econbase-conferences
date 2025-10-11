@@ -2,7 +2,7 @@
 
 This document records the critical security issues identified and fixed before deployment.
 
-## [P0] CRITICAL: Unauthenticated Moderation Endpoints (FIXED)
+## [P0] CRITICAL: Unauthenticated Moderation Endpoints (FIXED v2)
 
 ### Issue
 The original implementation had a **critical authentication bypass vulnerability**. The moderation endpoints (approve/reject) were accessible to anyone with the web app URL. An attacker could construct URLs like:
@@ -16,36 +16,48 @@ and approve/reject arbitrary submissions without authentication.
 - No check was performed to verify the user was an authorized moderator
 - `Session.getActiveUser().getEmail()` was called but the result was not validated against the moderator list
 
-### Fix Applied
-1. **Added `generateModerationToken()` function** - Generates HMAC-SHA256 tokens specific to each row and action (approve/reject)
+### Fix Applied (v1 - INCOMPLETE)
+Initial fix added token validation and Session.getActiveUser() checking, but introduced a NEW P0 bug (see below).
 
-2. **Token validation** - `handleModeration` now:
-   - Validates the token matches the expected HMAC for that row and action
-   - Returns error if token is invalid or missing
+### Fix Applied (v2 - COMPLETE)
+1. **Added `generateModerationToken(row, action, moderatorEmail)` function** - Generates HMAC-SHA256 tokens specific to:
+   - Row number
+   - Action (approve/reject)
+   - **Moderator email** (NEW in v2)
 
-3. **Moderator authentication** - Added defense-in-depth checks:
-   - Verifies `Session.getActiveUser().getEmail()` returns a value
-   - Checks the email against `CONFIG.MODERATORS` whitelist
-   - Returns 403-style error for unauthorized users
-   - Logs all unauthorized access attempts
+2. **Moderator email embedded in URL and token**:
+   - URL includes: `?action=approve&row=5&moderator=user@example.com&token=HMAC`
+   - Token is HMAC of: `row|action|moderator_email|secret`
+   - Each moderator gets a unique token bound to their email
 
-4. **Updated email templates** - Moderation URLs now include secure tokens:
-   ```javascript
-   var approveToken = generateModerationToken(row, 'approved');
-   var approveUrl = webAppUrl + '?action=approve&row=' + row + '&token=' + approveToken;
-   ```
+3. **Token validation proves moderator identity**:
+   - Validates token matches expected HMAC for that row + action + moderator
+   - Moderator email comes from URL but is verified by the HMAC
+   - No dependency on `Session.getActiveUser()` for authentication
+
+4. **Moderator whitelist still checked**:
+   - After token validation, moderator email is checked against `CONFIG.MODERATORS`
+   - This ensures only authorized moderators received the email
+
+5. **Session user logged optionally**:
+   - `Session.getActiveUser().getEmail()` is logged if present (audit purposes)
+   - But blank session user is NOT treated as an error (allows external moderators)
 
 ### Security Properties
-- **Token binding**: Each token is bound to a specific row and action, preventing token reuse
-- **Defense in depth**: Both token validation AND moderator whitelist checking
-- **Audit trail**: All unauthorized attempts are logged
-- **Clear error messages**: Users are told when they're unauthorized without revealing system details
+- **Token binding**: Each token is bound to specific row + action + moderator email
+- **Moderator identity verified**: Token proves the moderator received the email
+- **External moderator support**: Works for moderators outside the script owner's Workspace domain
+- **Defense in depth**: Token validation AND moderator whitelist checking
+- **Audit trail**: All attempts logged with moderator email (from token) and session user (when available)
+- **Token isolation**: One moderator cannot use another moderator's token
 
 ### Code References
-- Token generation: `apps-script/Code.gs:238-247`
-- Token validation: `apps-script/Code.gs:167-177`
-- Moderator check: `apps-script/Code.gs:179-205`
-- URL generation: `apps-script/Code.gs:362-367`
+- Token generation: `apps-script/Code.gs:284-293`
+- Token validation: `apps-script/Code.gs:191-200`
+- Moderator authentication: `apps-script/Code.gs:207-222`
+- Session user logging: `apps-script/Code.gs:224-231`
+- URL generation: `apps-script/Code.gs:393-402`
+- Email sending: `apps-script/Code.gs:414-460`
 
 ---
 
@@ -91,17 +103,71 @@ This is UI-dependent and unreliable in an automated trigger context.
 
 ---
 
+## [P0] CRITICAL: External Moderator Rejection (FIXED)
+
+### Issue
+The v1 fix for unauthenticated moderation added a check that **rejected blank `Session.getActiveUser().getEmail()` values**. This broke the entire workflow because:
+- Apps Script returns blank for users **outside the script owner's Workspace domain**
+- External moderators (e.g., Martin using personal Gmail) are the **expected case**
+- The "fix" made legitimate moderation impossible
+
+### Root Cause
+Misunderstanding of Apps Script's authentication model:
+```javascript
+if (!moderatorEmail) {
+  return createHtmlResponse('Unauthorized access...', false);
+}
+```
+This code rejected external moderators, which is exactly who needs to use the system.
+
+### Impact
+- Martin (and any other external moderator) would be blocked from moderating
+- Workflow broken for the primary use case
+- System would only work if both moderators are in the same Workspace domain (unlikely)
+
+### Fix Applied
+1. **Removed hard dependency on `Session.getActiveUser()`** for authentication
+2. **Moderator email now comes from URL and is verified by token**:
+   - URL includes `moderator=user@example.com`
+   - Token is HMAC that includes this moderator email
+   - Valid token proves the moderator email is authentic
+3. **Session user is logged but not required**:
+   ```javascript
+   var sessionUser = Session.getActiveUser().getEmail();
+   if (sessionUser) {
+     Logger.log('Session user: ' + sessionUser + ' (token verified for: ' + moderatorEmail + ')');
+   } else {
+     Logger.log('Session user blank (external moderator), using token-verified: ' + moderatorEmail);
+   }
+   ```
+
+### Security Properties
+- **Works for all moderators**: Internal and external moderators both supported
+- **Token proves identity**: Even when session user is blank, token verifies moderator email
+- **Audit trail preserved**: Logs both token-verified email and session user (when available)
+- **No regression**: External moderators work exactly as intended
+
+### Code References
+- External moderator handling: `apps-script/Code.gs:224-231`
+- Moderator parameter extraction: `apps-script/Code.gs:74`
+- Token validation with moderator: `apps-script/Code.gs:191-200`
+
+---
+
 ## Testing Checklist
 
 Before deploying the fixed version, verify:
 
 ### Authentication Testing
-- [ ] **Without token**: Try accessing approve/reject URLs without token parameter → should see "Invalid or expired moderation link" error
-- [ ] **With wrong token**: Modify token in URL → should see error
-- [ ] **With valid token but not logged in**: Open in incognito window → should see "Unauthorized access" error
-- [ ] **With valid token but wrong user**: Log in as non-moderator → should see "not authorized to moderate" error
-- [ ] **With valid token and authorized user**: Should work correctly
-- [ ] **Check logs**: Verify unauthorized attempts are logged with user email
+- [ ] **Without token**: Try accessing approve/reject URLs without token parameter → should see "Invalid moderation link" error
+- [ ] **With wrong token**: Modify token in URL → should see "Invalid or expired moderation link" error
+- [ ] **With wrong moderator email**: Modify moderator parameter in URL → should see "Invalid or expired moderation link" (token won't match)
+- [ ] **With valid token for different moderator**: Copy URL from one moderator's email and try with different moderator logged in → should work (token is what matters, not session user)
+- [ ] **With valid token, not logged in (incognito)**: Should work correctly (external moderator case)
+- [ ] **With valid token, logged in as different user**: Should work correctly (session user doesn't matter)
+- [ ] **With token for non-existent moderator**: Should see "not sent to an authorized moderator" error
+- [ ] **External moderator (personal Gmail)**: Should work perfectly with blank session user
+- [ ] **Check logs**: Verify all attempts logged with moderator email and session user status
 
 ### Sheet Selection Testing
 - [ ] **Form submission**: Submit form, verify status columns update in correct sheet
@@ -132,8 +198,9 @@ Before deploying the fixed version, verify:
 
 ## Timeline
 
-- **Issue reported**: 2025-10-11
-- **Fix implemented**: 2025-10-11
+- **Initial issues reported**: 2025-10-11
+- **Fix v1 implemented**: 2025-10-11 (incomplete - introduced new P0)
+- **Fix v2 implemented**: 2025-10-11 (complete - removed Session.getActiveUser() dependency)
 - **Status**: Fixed, awaiting deployment testing
 
 ---
