@@ -1,0 +1,31 @@
+# Google Apps Script
+.clasp.json
+.clasprc.json
+
+# R
+.Rhistory
+.RData
+.Rproj.user
+*.Rproj
+.Renviron
+google-credentials.json
+
+# Node
+node_modules/
+
+# Secrets
+secrets/
+*.key
+*.pem
+
+# Local configuration
+config.local.*
+local-config.gs
+
+# Data exports (if you ever export submission data)
+data/*.csv
+data/*.xlsx
+
+# OS files
+.DS_Store
+Thumbs.db

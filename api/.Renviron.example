@@ -1,0 +1,8 @@
+# Example R environment configuration
+# Copy this file to .Renviron and fill in actual values
+# .Renviron is gitignored for security
+
+# Google Sheet ID (from the Sheet URL)
+# Example: https://docs.google.com/spreadsheets/d/ABC123XYZ/edit
+# You would set: GOOGLE_SHEET_ID="ABC123XYZ"
+GOOGLE_SHEET_ID="your_google_sheet_id_here"
