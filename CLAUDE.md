@@ -106,10 +106,22 @@ echo 'GOOGLE_SHEET_ID="your_actual_sheet_id"' > api/.Renviron
 
 ## Critical Implementation Details
 
+### Security Architecture
+**IMPORTANT**: Critical security fixes were applied before initial deployment (see SECURITY_FIXES.md):
+1. **Moderation tokens**: All approve/reject links include HMAC tokens bound to specific rows and actions
+2. **Moderator authentication**: Active user email is validated against CONFIG.MODERATORS whitelist
+3. **Deterministic sheet selection**: Uses event-based or explicit sheet references, never `getActiveSheet()`
+
 ### Verification Token Security
-- Tokens are SHA-256 hashes of: row + secret + timestamp
+- Tokens are SHA-256 hashes of: row + email + secret
 - 7-day expiration enforced
 - Secret must be cryptographically random (32 bytes minimum)
+
+### Moderation Token Security
+- Tokens are SHA-256 hashes of: row + action + secret
+- Each token is specific to one row and one action (approve OR reject)
+- Tokens are validated before any moderation action
+- Defense-in-depth: Token validation AND moderator whitelist checking
 
 ### Email Template Requirements
 - Verification emails must include clickable links with token

@@ -121,10 +121,14 @@ This repository is public and safe to share. All sensitive configuration is hand
 
 ## Development Status
 
-**Current Status:** Initial implementation complete
+**Current Status:** Initial implementation complete with security hardening
 - ✅ Google Apps Script code written
+- ✅ Critical security fixes applied (see SECURITY_FIXES.md)
+  - Moderation endpoints protected with HMAC tokens
+  - Moderator authentication and authorization enforced
+  - Deterministic sheet selection implemented
 - ✅ Configuration templates created
-- ✅ Documentation complete
+- ✅ Comprehensive documentation
 - ⏳ Not yet deployed (awaiting Google Form/Sheet setup)
 
 **Next Steps:**

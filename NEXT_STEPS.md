@@ -39,6 +39,7 @@ This file tracks the immediate next steps for deploying the EconBase Conference 
   - Replace `MODERATOR_2_EMAIL` with Martin's email
   - Replace `VERIFICATION_SECRET` with generated secret
   - Replace `YOUR_SHEET_ID_HERE` with actual Sheet ID
+  - Verify `RESPONSES_SHEET` matches your sheet name (check in Google Sheets)
   - **DO NOT commit these changes to git**
 
 - [ ] **Install clasp and Deploy**

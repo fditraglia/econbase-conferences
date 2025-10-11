@@ -31,6 +31,10 @@ var CONFIG = {
   // Example: https://docs.google.com/spreadsheets/d/SHEET_ID_HERE/edit
   SHEET_ID: "YOUR_SHEET_ID_HERE",
 
+  // Name of the sheet containing form responses
+  // This is typically "Form Responses 1" or "Responses"
+  RESPONSES_SHEET: "Form Responses 1",
+
   // Verification link expiry (days)
   VERIFICATION_EXPIRY_DAYS: 7,
 

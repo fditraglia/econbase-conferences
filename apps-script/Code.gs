@@ -15,7 +15,8 @@
  */
 function onFormSubmit(e) {
   try {
-    var sheet = SpreadsheetApp.openById(CONFIG.SHEET_ID).getActiveSheet();
+    // Use the sheet from the event, not getActiveSheet() which is UI-dependent
+    var sheet = e.range.getSheet();
     var row = e.range.getRow();
 
     Logger.log('Processing form submission for row: ' + row);
@@ -74,7 +75,13 @@ function doGet(e) {
   Logger.log('doGet called with action: ' + action + ', row: ' + row);
 
   try {
-    var sheet = SpreadsheetApp.openById(CONFIG.SHEET_ID).getActiveSheet();
+    // Use explicit sheet name instead of getActiveSheet()
+    var sheet = SpreadsheetApp.openById(CONFIG.SHEET_ID).getSheetByName(CONFIG.RESPONSES_SHEET);
+
+    if (!sheet) {
+      Logger.log('ERROR: Could not find responses sheet: ' + CONFIG.RESPONSES_SHEET);
+      return createHtmlResponse('Configuration error: responses sheet not found', false);
+    }
 
     if (action === 'verify') {
       return handleVerification(sheet, row, token);
@@ -163,6 +170,46 @@ function handleReject(sheet, row, token) {
  * Common moderation handler
  */
 function handleModeration(sheet, row, token, newStatus) {
+  // CRITICAL SECURITY: Validate moderation token first
+  var action = newStatus.toLowerCase(); // "approved" or "rejected"
+  var expectedToken = generateModerationToken(row, action);
+
+  if (token !== expectedToken) {
+    Logger.log('Invalid moderation token for row: ' + row + ', action: ' + action);
+    return createHtmlResponse(
+      'Invalid or expired moderation link. Please use the link from the original moderation email.',
+      false
+    );
+  }
+
+  // Secondary check: Verify the user is an authorized moderator
+  var moderatorEmail = Session.getActiveUser().getEmail();
+
+  if (!moderatorEmail) {
+    Logger.log('No active user session for moderation attempt on row: ' + row);
+    return createHtmlResponse(
+      'Unauthorized access. Please log in with an authorized moderator account.',
+      false
+    );
+  }
+
+  // Check if moderator is in the authorized list
+  var isAuthorized = false;
+  for (var i = 0; i < CONFIG.MODERATORS.length; i++) {
+    if (CONFIG.MODERATORS[i].toLowerCase() === moderatorEmail.toLowerCase()) {
+      isAuthorized = true;
+      break;
+    }
+  }
+
+  if (!isAuthorized) {
+    Logger.log('Unauthorized moderation attempt by: ' + moderatorEmail + ' for row: ' + row);
+    return createHtmlResponse(
+      'You are not authorized to moderate submissions. Contact the system administrator.',
+      false
+    );
+  }
+
   var currentStatus = sheet.getRange(row, CONFIG.COLUMNS.STATUS).getValue();
   var emailVerified = sheet.getRange(row, CONFIG.COLUMNS.EMAIL_VERIFIED).getValue();
   var conferenceName = sheet.getRange(row, CONFIG.COLUMNS.CONFERENCE_NAME).getValue();
@@ -191,9 +238,6 @@ function handleModeration(sheet, row, token, newStatus) {
     );
   }
 
-  // Validate token (simple check - moderator must be in CONFIG.MODERATORS)
-  var moderatorEmail = Session.getActiveUser().getEmail();
-
   // Update status
   sheet.getRange(row, CONFIG.COLUMNS.STATUS).setValue(newStatus);
   sheet.getRange(row, CONFIG.COLUMNS.MODERATED_BY).setValue(moderatorEmail);
@@ -221,6 +265,21 @@ function handleModeration(sheet, row, token, newStatus) {
  */
 function generateVerificationToken(row, email) {
   var rawString = row + '|' + email + '|' + CONFIG.VERIFICATION_SECRET;
+  return Utilities.computeDigest(
+    Utilities.DigestAlgorithm.SHA_256,
+    rawString,
+    Utilities.Charset.UTF_8
+  ).map(function(byte) {
+    return ('0' + (byte & 0xFF).toString(16)).slice(-2);
+  }).join('');
+}
+
+/**
+ * Generates a moderation token using HMAC-SHA256
+ * This token authorizes a specific action (approve/reject) on a specific row
+ */
+function generateModerationToken(row, action) {
+  var rawString = row + '|' + action + '|' + CONFIG.VERIFICATION_SECRET;
   return Utilities.computeDigest(
     Utilities.DigestAlgorithm.SHA_256,
     rawString,
@@ -305,8 +364,13 @@ function notifyModerators(sheet, row) {
     var submitterEmail = sheet.getRange(row, CONFIG.COLUMNS.SUBMITTER_EMAIL).getValue();
 
     var webAppUrl = ScriptApp.getService().getUrl();
-    var approveUrl = webAppUrl + '?action=approve&row=' + row;
-    var rejectUrl = webAppUrl + '?action=reject&row=' + row;
+
+    // Generate secure moderation tokens for each action
+    var approveToken = generateModerationToken(row, 'approved');
+    var rejectToken = generateModerationToken(row, 'rejected');
+
+    var approveUrl = webAppUrl + '?action=approve&row=' + row + '&token=' + approveToken;
+    var rejectUrl = webAppUrl + '?action=reject&row=' + row + '&token=' + rejectToken;
 
     var dateStr = formatDate(startDate);
     if (endDate) {
