@@ -40,7 +40,12 @@ econbase-conferences/
 
 1. Create a Google Form with the fields specified in IMPLEMENTATION.md
 2. Link the form to a new Google Sheet
-3. Add column headers J-M to the sheet (Email Verified, Status, Moderated By, Moderated At)
+3. **Add column headers J-N** to the sheet:
+   - J: Submission ID (stable ID that never changes)
+   - K: Email Verified
+   - L: Status
+   - M: Moderated By
+   - N: Moderated At
 
 ### 2. Deploy Google Apps Script
 

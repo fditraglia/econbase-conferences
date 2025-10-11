@@ -21,6 +21,10 @@ function onFormSubmit(e) {
 
     Logger.log('Processing form submission for row: ' + row);
 
+    // Generate stable submission ID (timestamp + random component)
+    // This ID never changes even if rows are reordered
+    var submissionId = generateSubmissionId();
+
     // Get form values
     var values = e.values;
     var conferenceName = values[CONFIG.COLUMNS.CONFERENCE_NAME - 1];
@@ -32,12 +36,13 @@ function onFormSubmit(e) {
     var submissionDeadline = values[CONFIG.COLUMNS.SUBMISSION_DEADLINE - 1];
     var submitterEmail = values[CONFIG.COLUMNS.SUBMITTER_EMAIL - 1];
 
-    // Set initial status
+    // Set submission ID and initial status
+    sheet.getRange(row, CONFIG.COLUMNS.SUBMISSION_ID).setValue(submissionId);
     sheet.getRange(row, CONFIG.COLUMNS.EMAIL_VERIFIED).setValue(CONFIG.STATUS.UNVERIFIED);
     sheet.getRange(row, CONFIG.COLUMNS.STATUS).setValue(CONFIG.STATUS.PENDING);
 
-    // Generate verification token
-    var token = generateVerificationToken(row, submitterEmail);
+    // Generate verification token using submission ID (not row number)
+    var token = generateVerificationToken(submissionId, submitterEmail);
 
     // Send verification email
     var sent = sendVerificationEmail(
@@ -47,14 +52,14 @@ function onFormSubmit(e) {
       endDate,
       location,
       token,
-      row
+      submissionId
     );
 
     if (!sent) {
       sheet.getRange(row, CONFIG.COLUMNS.EMAIL_VERIFIED).setValue(CONFIG.STATUS.EMAIL_FAILED);
-      Logger.log('Failed to send verification email for row: ' + row);
+      Logger.log('Failed to send verification email for submission ID: ' + submissionId);
     } else {
-      Logger.log('Verification email sent successfully for row: ' + row);
+      Logger.log('Verification email sent successfully for submission ID: ' + submissionId);
     }
 
   } catch (error) {
@@ -69,11 +74,11 @@ function onFormSubmit(e) {
  */
 function doGet(e) {
   var action = e.parameter.action;
-  var row = parseInt(e.parameter.row);
+  var submissionId = e.parameter.id;  // Use submission ID instead of row number
   var token = e.parameter.token;
   var moderator = e.parameter.moderator; // Moderator email from URL (verified by token)
 
-  Logger.log('doGet called with action: ' + action + ', row: ' + row + ', moderator: ' + moderator);
+  Logger.log('doGet called with action: ' + action + ', submission ID: ' + submissionId + ', moderator: ' + moderator);
 
   try {
     // Use explicit sheet name instead of getActiveSheet()
@@ -85,11 +90,11 @@ function doGet(e) {
     }
 
     if (action === 'verify') {
-      return handleVerification(sheet, row, token);
+      return handleVerification(sheet, submissionId, token);
     } else if (action === 'approve') {
-      return handleApprove(sheet, row, token, moderator);
+      return handleApprove(sheet, submissionId, token, moderator);
     } else if (action === 'reject') {
-      return handleReject(sheet, row, token, moderator);
+      return handleReject(sheet, submissionId, token, moderator);
     } else {
       return createHtmlResponse('Invalid action', false);
     }
@@ -103,7 +108,15 @@ function doGet(e) {
 /**
  * Handles email verification
  */
-function handleVerification(sheet, row, token) {
+function handleVerification(sheet, submissionId, token) {
+  // Find the row by submission ID
+  var row = findRowBySubmissionId(sheet, submissionId);
+
+  if (!row) {
+    Logger.log('Submission ID not found: ' + submissionId);
+    return createHtmlResponse('Submission not found. It may have been deleted.', false);
+  }
+
   // Get submission data
   var emailVerified = sheet.getRange(row, CONFIG.COLUMNS.EMAIL_VERIFIED).getValue();
   var submitterEmail = sheet.getRange(row, CONFIG.COLUMNS.SUBMITTER_EMAIL).getValue();
@@ -118,8 +131,8 @@ function handleVerification(sheet, row, token) {
     );
   }
 
-  // Validate token
-  var expectedToken = generateVerificationToken(row, submitterEmail);
+  // Validate token (uses submission ID, not row)
+  var expectedToken = generateVerificationToken(submissionId, submitterEmail);
   if (token !== expectedToken) {
     return createHtmlResponse('Invalid verification link.', false);
   }
@@ -139,10 +152,10 @@ function handleVerification(sheet, row, token) {
   // Mark as verified
   sheet.getRange(row, CONFIG.COLUMNS.EMAIL_VERIFIED).setValue(CONFIG.STATUS.VERIFIED);
 
-  // Notify moderators
-  notifyModerators(sheet, row);
+  // Notify moderators (pass submission ID)
+  notifyModerators(sheet, row, submissionId);
 
-  Logger.log('Email verified for row: ' + row);
+  Logger.log('Email verified for submission ID: ' + submissionId + ' (row: ' + row + ')');
 
   return createHtmlResponse(
     'Thank you! Your email has been verified.<br><br>' +
@@ -156,43 +169,51 @@ function handleVerification(sheet, row, token) {
 /**
  * Handles conference approval
  */
-function handleApprove(sheet, row, token, moderatorEmail) {
-  return handleModeration(sheet, row, token, moderatorEmail, CONFIG.STATUS.APPROVED);
+function handleApprove(sheet, submissionId, token, moderatorEmail) {
+  return handleModeration(sheet, submissionId, token, moderatorEmail, CONFIG.STATUS.APPROVED);
 }
 
 /**
  * Handles conference rejection
  */
-function handleReject(sheet, row, token, moderatorEmail) {
-  return handleModeration(sheet, row, token, moderatorEmail, CONFIG.STATUS.REJECTED);
+function handleReject(sheet, submissionId, token, moderatorEmail) {
+  return handleModeration(sheet, submissionId, token, moderatorEmail, CONFIG.STATUS.REJECTED);
 }
 
 /**
  * Common moderation handler
  * @param {Sheet} sheet - The spreadsheet sheet
- * @param {number} row - The row number
+ * @param {string} submissionId - The stable submission ID
  * @param {string} token - The HMAC token from the URL
  * @param {string} moderatorEmail - The moderator email from the URL (to be verified by token)
  * @param {string} newStatus - The new status (APPROVED or REJECTED)
  */
-function handleModeration(sheet, row, token, moderatorEmail, newStatus) {
+function handleModeration(sheet, submissionId, token, moderatorEmail, newStatus) {
   // CRITICAL SECURITY: Validate moderation token first
   var action = newStatus.toLowerCase(); // "approved" or "rejected"
 
+  // Find the row by submission ID
+  var row = findRowBySubmissionId(sheet, submissionId);
+
+  if (!row) {
+    Logger.log('Submission ID not found: ' + submissionId);
+    return createHtmlResponse('Submission not found. It may have been deleted.', false);
+  }
+
   // Check that moderator email was provided
   if (!moderatorEmail) {
-    Logger.log('Missing moderator parameter in moderation request for row: ' + row);
+    Logger.log('Missing moderator parameter in moderation request for submission ID: ' + submissionId);
     return createHtmlResponse(
       'Invalid moderation link. Please use the link from the original moderation email.',
       false
     );
   }
 
-  // Validate token matches the expected HMAC for this row + action + moderator
-  var expectedToken = generateModerationToken(row, action, moderatorEmail);
+  // Validate token matches the expected HMAC for this submission ID + action + moderator
+  var expectedToken = generateModerationToken(submissionId, action, moderatorEmail);
 
   if (token !== expectedToken) {
-    Logger.log('Invalid moderation token for row: ' + row + ', action: ' + action + ', moderator: ' + moderatorEmail);
+    Logger.log('Invalid moderation token for submission ID: ' + submissionId + ', action: ' + action + ', moderator: ' + moderatorEmail);
     return createHtmlResponse(
       'Invalid or expired moderation link. Please use the link from the original moderation email.',
       false
@@ -201,7 +222,7 @@ function handleModeration(sheet, row, token, moderatorEmail, newStatus) {
 
   // Token is valid, which proves:
   // 1. The moderator received the email (has access to the secret)
-  // 2. The link is for this specific row, action, and moderator
+  // 2. The link is for this specific submission ID, action, and moderator
   // 3. The moderator email is authentic (embedded in the HMAC)
 
   // Verify the moderator is in the authorized list
@@ -214,7 +235,7 @@ function handleModeration(sheet, row, token, moderatorEmail, newStatus) {
   }
 
   if (!isAuthorized) {
-    Logger.log('Token valid but moderator not in authorized list: ' + moderatorEmail + ' for row: ' + row);
+    Logger.log('Token valid but moderator not in authorized list: ' + moderatorEmail + ' for submission ID: ' + submissionId);
     return createHtmlResponse(
       'This moderation link was not sent to an authorized moderator. Contact the system administrator.',
       false
@@ -225,9 +246,9 @@ function handleModeration(sheet, row, token, moderatorEmail, newStatus) {
   // Note: This will often be blank for external moderators (e.g., personal Gmail)
   var sessionUser = Session.getActiveUser().getEmail();
   if (sessionUser) {
-    Logger.log('Session user: ' + sessionUser + ' (token verified for: ' + moderatorEmail + ')');
+    Logger.log('Session user: ' + sessionUser + ' (token verified for: ' + moderatorEmail + ') - submission ID: ' + submissionId);
   } else {
-    Logger.log('Session user blank (external moderator), using token-verified: ' + moderatorEmail);
+    Logger.log('Session user blank (external moderator), using token-verified: ' + moderatorEmail + ' - submission ID: ' + submissionId);
   }
 
   var currentStatus = sheet.getRange(row, CONFIG.COLUMNS.STATUS).getValue();
@@ -263,7 +284,7 @@ function handleModeration(sheet, row, token, moderatorEmail, newStatus) {
   sheet.getRange(row, CONFIG.COLUMNS.MODERATED_BY).setValue(moderatorEmail);
   sheet.getRange(row, CONFIG.COLUMNS.MODERATED_AT).setValue(new Date());
 
-  Logger.log('Conference ' + newStatus.toLowerCase() + ' by ' + moderatorEmail + ' for row: ' + row);
+  Logger.log('Conference ' + newStatus.toLowerCase() + ' by ' + moderatorEmail + ' for submission ID: ' + submissionId + ' (row: ' + row + ')');
 
   // Notify other moderator
   notifyOtherModerator(moderatorEmail, newStatus, conferenceName);
@@ -281,10 +302,42 @@ function handleModeration(sheet, row, token, moderatorEmail, newStatus) {
 }
 
 /**
- * Generates a verification token using SHA-256
+ * Generates a stable submission ID
+ * Format: timestamp-randomHex
+ * This ID never changes even if sheet rows are reordered
  */
-function generateVerificationToken(row, email) {
-  var rawString = row + '|' + email + '|' + CONFIG.VERIFICATION_SECRET;
+function generateSubmissionId() {
+  var timestamp = new Date().getTime();
+  var random = Math.floor(Math.random() * 0xFFFFFF).toString(16).padStart(6, '0');
+  return timestamp + '-' + random;
+}
+
+/**
+ * Finds a row by submission ID
+ * @param {Sheet} sheet - The spreadsheet sheet
+ * @param {string} submissionId - The submission ID to find
+ * @returns {number|null} - The row number, or null if not found
+ */
+function findRowBySubmissionId(sheet, submissionId) {
+  var data = sheet.getDataRange().getValues();
+
+  // Start from row 2 (skip header)
+  for (var i = 1; i < data.length; i++) {
+    if (data[i][CONFIG.COLUMNS.SUBMISSION_ID - 1] === submissionId) {
+      return i + 1; // Return 1-indexed row number
+    }
+  }
+
+  return null; // Not found
+}
+
+/**
+ * Generates a verification token using SHA-256
+ * @param {string} submissionId - The stable submission ID
+ * @param {string} email - The submitter's email
+ */
+function generateVerificationToken(submissionId, email) {
+  var rawString = submissionId + '|' + email + '|' + CONFIG.VERIFICATION_SECRET;
   return Utilities.computeDigest(
     Utilities.DigestAlgorithm.SHA_256,
     rawString,
@@ -296,13 +349,13 @@ function generateVerificationToken(row, email) {
 
 /**
  * Generates a moderation token using HMAC-SHA256
- * This token authorizes a specific moderator to perform a specific action on a specific row
- * @param {number} row - The spreadsheet row number
+ * This token authorizes a specific moderator to perform a specific action on a specific submission
+ * @param {string} submissionId - The stable submission ID
  * @param {string} action - The action ('approved' or 'rejected')
  * @param {string} moderatorEmail - The email of the moderator this token is for
  */
-function generateModerationToken(row, action, moderatorEmail) {
-  var rawString = row + '|' + action + '|' + moderatorEmail + '|' + CONFIG.VERIFICATION_SECRET;
+function generateModerationToken(submissionId, action, moderatorEmail) {
+  var rawString = submissionId + '|' + action + '|' + moderatorEmail + '|' + CONFIG.VERIFICATION_SECRET;
   return Utilities.computeDigest(
     Utilities.DigestAlgorithm.SHA_256,
     rawString,
@@ -315,10 +368,10 @@ function generateModerationToken(row, action, moderatorEmail) {
 /**
  * Sends verification email to submitter
  */
-function sendVerificationEmail(email, conferenceName, startDate, endDate, location, token, row) {
+function sendVerificationEmail(email, conferenceName, startDate, endDate, location, token, submissionId) {
   try {
     var webAppUrl = ScriptApp.getService().getUrl();
-    var verifyUrl = webAppUrl + '?action=verify&row=' + row + '&token=' + token;
+    var verifyUrl = webAppUrl + '?action=verify&id=' + encodeURIComponent(submissionId) + '&token=' + token;
 
     var dateStr = formatDate(startDate);
     if (endDate) {
@@ -375,7 +428,7 @@ function sendVerificationEmail(email, conferenceName, startDate, endDate, locati
 /**
  * Notifies moderators of a verified submission
  */
-function notifyModerators(sheet, row) {
+function notifyModerators(sheet, row, submissionId) {
   try {
     var conferenceName = sheet.getRange(row, CONFIG.COLUMNS.CONFERENCE_NAME).getValue();
     var startDate = sheet.getRange(row, CONFIG.COLUMNS.START_DATE).getValue();
@@ -389,15 +442,15 @@ function notifyModerators(sheet, row) {
     var webAppUrl = ScriptApp.getService().getUrl();
 
     // Generate secure moderation tokens for EACH moderator
-    // Each moderator gets their own unique token bound to their email
+    // Each moderator gets their own unique token bound to their email and submission ID
     var moderatorUrls = CONFIG.MODERATORS.map(function(moderator) {
-      var approveToken = generateModerationToken(row, 'approved', moderator);
-      var rejectToken = generateModerationToken(row, 'rejected', moderator);
+      var approveToken = generateModerationToken(submissionId, 'approved', moderator);
+      var rejectToken = generateModerationToken(submissionId, 'rejected', moderator);
 
       return {
         email: moderator,
-        approveUrl: webAppUrl + '?action=approve&row=' + row + '&moderator=' + encodeURIComponent(moderator) + '&token=' + approveToken,
-        rejectUrl: webAppUrl + '?action=reject&row=' + row + '&moderator=' + encodeURIComponent(moderator) + '&token=' + rejectToken
+        approveUrl: webAppUrl + '?action=approve&id=' + encodeURIComponent(submissionId) + '&moderator=' + encodeURIComponent(moderator) + '&token=' + approveToken,
+        rejectUrl: webAppUrl + '?action=reject&id=' + encodeURIComponent(submissionId) + '&moderator=' + encodeURIComponent(moderator) + '&token=' + rejectToken
       };
     });
 
@@ -445,7 +498,7 @@ function notifyModerators(sheet, row) {
         '<a href="' + modData.rejectUrl + '" style="display: inline-block; padding: 12px 30px; margin: 0 10px; background-color: #dc3545; color: white; text-decoration: none; border-radius: 5px; font-weight: bold;">✗ REJECT</a>' +
         '</div>' +
         '<p style="text-align: center; margin-top: 20px;">' +
-        '<a href="https://docs.google.com/spreadsheets/d/' + CONFIG.SHEET_ID + '" style="color: #666; font-size: 14px;">View in spreadsheet (Row ' + row + ')</a>' +
+        '<a href="https://docs.google.com/spreadsheets/d/' + CONFIG.SHEET_ID + '" style="color: #666; font-size: 14px;">View in spreadsheet (ID: ' + submissionId + ')</a>' +
         '</p>' +
         '</div>';
 
@@ -459,7 +512,7 @@ function notifyModerators(sheet, row) {
       });
     });
 
-    Logger.log('Moderators notified for row: ' + row);
+    Logger.log('Moderators notified for submission ID: ' + submissionId + ' (row: ' + row + ')');
 
   } catch (error) {
     Logger.log('Error notifying moderators: ' + error.toString());

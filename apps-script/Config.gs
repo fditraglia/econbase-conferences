@@ -49,10 +49,11 @@ var CONFIG = {
     DESCRIPTION: 7,
     SUBMISSION_DEADLINE: 8,
     SUBMITTER_EMAIL: 9,
-    EMAIL_VERIFIED: 10,
-    STATUS: 11,
-    MODERATED_BY: 12,
-    MODERATED_AT: 13
+    SUBMISSION_ID: 10,        // Stable ID - NEVER changes even if rows reorder
+    EMAIL_VERIFIED: 11,
+    STATUS: 12,
+    MODERATED_BY: 13,
+    MODERATED_AT: 14
   },
 
   // Email configuration

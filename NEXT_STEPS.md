@@ -13,12 +13,13 @@ This file tracks the immediate next steps for deploying the EconBase Conference 
 
 - [ ] **Set Up Google Sheet**
   - Form should auto-create sheet, or link manually
-  - Rename first sheet to "Responses"
-  - Manually add column headers for columns J-M:
-    - J: Email Verified
-    - K: Status
-    - L: Moderated By
-    - M: Moderated At
+  - Rename first sheet to "Form Responses 1" (or update CONFIG.RESPONSES_SHEET to match)
+  - **IMPORTANT**: Manually add column headers for columns J-N:
+    - J: Submission ID (CRITICAL - enables row-reorder resilience)
+    - K: Email Verified
+    - L: Status
+    - M: Moderated By
+    - N: Moderated At
   - Set up conditional formatting (optional but helpful):
     - Status = APPROVED → Green background
     - Status = REJECTED → Red background

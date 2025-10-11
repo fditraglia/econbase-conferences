@@ -176,6 +176,16 @@ Before deploying the fixed version, verify:
 - [ ] **Moderation workflow**: Click approve/reject, check correct sheet is updated
 - [ ] **Wrong sheet name**: Temporarily misconfigure `RESPONSES_SHEET` → should see error in logs
 
+### Submission ID Testing (CRITICAL)
+- [ ] **Submission ID generated**: Submit form, verify column J contains ID like "1696204800000-a3f2b1"
+- [ ] **Sort sheet by name**: Sort spreadsheet by conference name
+- [ ] **Verification still works**: Click old verification link → should find submission by ID and verify correct one
+- [ ] **Moderation still works**: Click old moderation link → should find submission by ID and moderate correct one
+- [ ] **Check logs**: Verify logs show both submission ID and current row number
+- [ ] **Delete submission**: Delete a row, click its old verification link → should show "Submission not found"
+- [ ] **Filter sheet**: Apply filter, verify links still work
+- [ ] **Insert row above**: Insert row above submission, verify links still work (row number changed but ID didn't)
+
 ### Regression Testing
 - [ ] Complete end-to-end flow: submit → verify → moderate → approve
 - [ ] All email notifications still work correctly
@@ -196,11 +206,94 @@ Before deploying the fixed version, verify:
 
 ---
 
+---
+
+## [P0] CRITICAL: Row-Sensitive Tokens (FIXED)
+
+### Issue
+**ALL tokens (verification and moderation) were based on mutable row numbers**. If someone sorts or filters the spreadsheet, row numbers change, causing:
+- Moderation links to act on the **wrong submission**
+- Verification links to fail or verify the wrong submission
+
+### Example Attack Scenario
+1. Submission A arrives at row 2, moderator email sent
+2. Someone sorts sheet by conference name
+3. Submission A moves to row 5, different submission now at row 2
+4. Moderator clicks "APPROVE" → accidentally approves wrong conference!
+
+### Root Cause
+Tokens embedded row numbers:
+```javascript
+// OLD - BAD
+var token = generateModerationToken(row, action, moderator);
+var url = webAppUrl + '?action=approve&row=' + row + '&token=' + token;
+```
+
+Row numbers are **mutable** - they change on sort, filter, or row insertion.
+
+### Fix Applied
+1. **Added SUBMISSION_ID column** (new column J):
+   - Format: `timestamp-randomHex` (e.g., `1696204800000-a3f2b1`)
+   - Generated once on form submission
+   - **Never changes** even if rows reorder
+
+2. **Updated all tokens to use submission ID**:
+   ```javascript
+   var token = generateModerationToken(submissionId, action, moderator);
+   var url = webAppUrl + '?action=approve&id=' + submissionId + '&token=' + token;
+   ```
+
+3. **Added `findRowBySubmissionId()` function**:
+   - Looks up current row by scanning submission ID column
+   - Returns null if not found (submission deleted)
+
+4. **Updated all handlers**:
+   - `handleVerification()` - looks up row by ID
+   - `handleModeration()` - looks up row by ID
+   - URLs use `?id=SUBMISSION_ID` instead of `?row=NUMBER`
+
+### Security Properties
+- **Immune to reordering**: Tokens remain valid regardless of sort/filter
+- **Integrity preserved**: Moderators always act on correct submission
+- **Graceful degradation**: Returns "not found" if submission deleted
+- **Performance**: O(n) lookup is acceptable for submission volumes
+
+### Impact on Sheet Structure
+**IMPORTANT**: This changes the column layout!
+
+**OLD columns**:
+- A-I: Form fields
+- J: Email Verified
+- K: Status
+- L: Moderated By
+- M: Moderated At
+
+**NEW columns**:
+- A-I: Form fields
+- **J: Submission ID** (NEW!)
+- K: Email Verified
+- L: Status
+- M: Moderated By
+- N: Moderated At
+
+When setting up the sheet, you must add the "Submission ID" column header at position J.
+
+### Code References
+- Submission ID generation: `apps-script/Code.gs:309-313`
+- Row lookup function: `apps-script/Code.gs:321-332`
+- Token generation (verification): `apps-script/Code.gs:339-348`
+- Token generation (moderation): `apps-script/Code.gs:357-366`
+- Form submission handler: `apps-script/Code.gs:26, 40`
+- URL generation: `apps-script/Code.gs:374, 452-453`
+
+---
+
 ## Timeline
 
 - **Initial issues reported**: 2025-10-11
 - **Fix v1 implemented**: 2025-10-11 (incomplete - introduced new P0)
 - **Fix v2 implemented**: 2025-10-11 (complete - removed Session.getActiveUser() dependency)
+- **Fix v3 implemented**: 2025-10-11 (complete - stable submission IDs replace row-based tokens)
 - **Status**: Fixed, awaiting deployment testing
 
 ---
