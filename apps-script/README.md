@@ -20,11 +20,12 @@ clasp login
 
 1. Create a new Google Form with the fields specified in IMPLEMENTATION.md
 2. Link the form to a new Google Sheet
-3. In the Sheet, add column headers for columns J-M:
-   - J: Email Verified
-   - K: Status
-   - L: Moderated By
-   - M: Moderated At
+3. In the Sheet, add column headers for columns J-N:
+   - J: Submission ID (CRITICAL - enables row-reorder resilience)
+   - K: Email Verified
+   - L: Status
+   - M: Moderated By
+   - N: Moderated At
 
 4. Initialize the clasp project:
 ```bash

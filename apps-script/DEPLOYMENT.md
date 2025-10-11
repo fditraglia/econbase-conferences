@@ -9,7 +9,12 @@ Use this checklist before deploying to production.
 - [ ] Privacy notice added to form header
 - [ ] Form validation enabled (email format, URL format)
 - [ ] Form linked to new Google Sheet
-- [ ] Sheet columns J-M headers added manually
+- [ ] Sheet columns J-N headers added manually:
+  - J: Submission ID
+  - K: Email Verified
+  - L: Status
+  - M: Moderated By
+  - N: Moderated At
 - [ ] Conditional formatting applied to Status and Email Verified columns
 - [ ] Sheet sharing configured (view/edit for both moderators only)
 

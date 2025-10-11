@@ -88,10 +88,11 @@ By submitting, you confirm you have authority to publicize this event.
 | G | Description | Text | Form | Brief description |
 | H | Submission Deadline | Date | Form | CFP deadline (optional) |
 | I | Submitter Email | Email | Form | For verification/notification |
-| J | Email Verified | Text | Script | UNVERIFIED/VERIFIED/EMAIL_FAILED |
-| K | Status | Text | Script | PENDING/APPROVED/REJECTED |
-| L | Moderated By | Email | Script | Which moderator took action |
-| M | Moderated At | Datetime | Script | When moderation occurred |
+| J | Submission ID | Text | Script | Stable unique ID (timestamp-randomHex) |
+| K | Email Verified | Text | Script | UNVERIFIED/VERIFIED/EMAIL_FAILED |
+| L | Status | Text | Script | PENDING/APPROVED/REJECTED |
+| M | Moderated By | Email | Script | Which moderator took action |
+| N | Moderated At | Datetime | Script | When moderation occurred |
 
 **Access Control:**
 - View/Edit: You + Martin only
@@ -189,10 +190,11 @@ var CONFIG = {
     DESCRIPTION: 7,
     SUBMISSION_DEADLINE: 8,
     SUBMITTER_EMAIL: 9,
-    EMAIL_VERIFIED: 10,
-    STATUS: 11,
-    MODERATED_BY: 12,
-    MODERATED_AT: 13
+    SUBMISSION_ID: 10,        // Stable ID - NEVER changes even if rows reorder
+    EMAIL_VERIFIED: 11,
+    STATUS: 12,
+    MODERATED_BY: 13,
+    MODERATED_AT: 14
   },
   
   EMAIL: {
@@ -293,7 +295,12 @@ Subject: ✅ {CONFERENCE_NAME}
 
 2. **Set up Sheet**
    - Rename first sheet to "Responses"
-   - Add column headers J-M manually
+   - Add column headers J-N manually:
+     - J: Submission ID
+     - K: Email Verified
+     - L: Status
+     - M: Moderated By
+     - N: Moderated At
    - Set up conditional formatting:
      - Status = APPROVED → Green
      - Status = REJECTED → Red
