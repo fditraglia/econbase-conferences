@@ -7,6 +7,11 @@
 - Impact: any unauthenticated visitor can approve or reject arbitrary submissions, creating a critical integrity breach and false audit trail.
 - Fix: generate and embed signed, per-row moderation tokens in the moderator emails (e.g., HMAC of row + status + secret), validate them before updating the sheet, and log the authorised moderator identifier. Avoid relying solely on `Session.getActiveUser()` because it often returns blank for moderators outside the owner’s Workspace domain; prefer token verification or a custom signed payload tied to the moderator’s email address.
 
+### [P0] Row-sensitive moderation tokens (`apps-script/Code.gs:178`)
+- Moderation tokens are derived from the spreadsheet row index, so any reordering (sort, filter, row insertion) after the email is sent but before the moderator clicks the link causes the action to apply to whichever submission now resides in that row.
+- Impact: a moderator can unknowingly approve or reject the wrong conference, breaking integrity guarantees.
+- Fix: store a stable submission identifier (e.g., timestamp plus nonce) in an additional column, embed that ID in the moderation token, and resolve the row by ID before updating.
+
 ### [P1] Wrong sheet selection in form trigger (`apps-script/Code.gs:16`)
 - `onFormSubmit` reopens the spreadsheet and calls `getActiveSheet()`, which resolves to whichever tab the deployer last viewed rather than the form responses sheet.
 - Impact: verification and status fields can be written to the wrong worksheet, corrupting moderation state.
@@ -17,8 +22,13 @@
 - Impact: legitimate moderators using personal Gmail or other domains are denied approval/rejection actions, regressing functionality compared to the previous release.
 - Fix: remove the hard dependency on `Session.getActiveUser()` for authentication. Instead, rely on the signed moderation tokens noted above, or fetch moderator identity from the token itself. Optionally log the active user when present, but do not treat blank values as an automatic failure.
 
+### [P1] Verification links break on row changes (`apps-script/Code.gs:106`)
+- Submitter verification tokens also depend on the mutable row number. Any subsequent sort or row insertion shifts records, causing token mismatch errors that force submitters to resubmit.
+- Fix: reuse the stable submission ID suggested above for verification, embedding it in the token and resolving the sheet row via lookup rather than raw index.
+
 ## Suggested Remediation Sequence
 1. Introduce a secure token scheme or alternate moderator authentication and update the email templates to include the token.
 2. Update `handleModeration` to validate the token, allow external moderators, and prefer logging the token-derived moderator email when `Session.getActiveUser()` is blank.
-3. Replace `getActiveSheet()` in `onFormSubmit` with a deterministic sheet lookup tied to the event payload.
-4. Add regression tests/manual verification steps to ensure both fixes function before redeploying the web app.
+3. Replace row-based verification/moderation tokens with an immutable submission identifier; update all handlers to resolve rows via that ID.
+4. Replace `getActiveSheet()` in `onFormSubmit` with a deterministic sheet lookup tied to the event payload.
+5. Add regression tests/manual verification steps to ensure these fixes function before redeploying the web app.
