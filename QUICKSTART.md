@@ -212,9 +212,17 @@ The spreadsheet should open automatically after linking.
    - Replace it with: `WEB_APP_URL: "paste-the-url-you-just-copied",`
    - **Save** (Ctrl+S)
 
+9. **CRITICAL: Redeploy the web app to use the updated URL:**
+   - Click **Deploy → Manage deployments**
+   - Click the **Edit** icon (✏️) next to the deployment you just created
+   - Click **Deploy**
+   - The deployment URL stays the same, but now the live web app uses the updated Config.gs
+
+   **Why this step is critical:** The deployment you created in Step 4 captured the code *before* you updated WEB_APP_URL. Without redeploying, moderation emails will still contain placeholder URLs and won't work.
+
 **Why we need WEB_APP_URL:** The built-in `ScriptApp.getService().getUrl()` function can return incorrect URLs in certain situations (especially with bound scripts). Hardcoding the URL ensures all verification and moderation links always point to the correct deployment.
 
-**Future maintenance:** If you ever redeploy the web app, copy the new URL and update `WEB_APP_URL` in Config.gs.
+**Future maintenance:** If you ever redeploy the web app, copy the new URL and update `WEB_APP_URL` in Config.gs, then redeploy again.
 
 ## Step 5: Set Up Form Submission Trigger
 
@@ -547,6 +555,7 @@ fetch('/data/conferences.json')
 - **Check `WEB_APP_URL` in Config.gs** - it should match the deployed URL exactly
 - **Get the correct URL:** Deploy → Manage deployments, copy the Web App URL
 - **Update Config.gs and save**
+- **CRITICAL: Redeploy after updating Config.gs:** Deploy → Manage deployments → Edit → Deploy
 - **Submit form again** to get a new verification email with correct URL
 
 ### "Invalid verification link" error
@@ -577,10 +586,13 @@ fetch('/data/conferences.json')
 - Submission IDs (column J) should contain stable IDs like `1696204800000-a3f2b1`
 - If Submission IDs are missing, the `onFormSubmit` function isn't running properly
 
-### Changes to Code.gs not reflected
+### Changes to Code.gs or Config.gs not reflected
 - **Save the file:** Ctrl+S or disk icon
 - **Check you're editing the bound script:** Extensions → Apps Script from the sheet (not a standalone script)
-- **Redeploy if needed:** Deploy → Manage deployments → Edit → Deploy (only if you changed `doGet` or web app behavior)
+- **Redeploy if needed:** Deploy → Manage deployments → Edit → Deploy
+  - **Always redeploy** if you changed Config.gs (especially WEB_APP_URL)
+  - **Always redeploy** if you changed `doGet`, `handleVerification`, `handleModeration`, or email generation functions
+  - **No need to redeploy** if you only changed `onFormSubmit` (triggers use HEAD deployment automatically)
 
 ## Security Notes
 
