@@ -370,7 +370,7 @@ function generateModerationToken(submissionId, action, moderatorEmail) {
  */
 function sendVerificationEmail(email, conferenceName, startDate, endDate, location, token, submissionId) {
   try {
-    var webAppUrl = ScriptApp.getService().getUrl();
+    var webAppUrl = CONFIG.WEB_APP_URL;
     var verifyUrl = webAppUrl + '?action=verify&id=' + encodeURIComponent(submissionId) + '&token=' + token;
 
     var dateStr = formatDate(startDate);
@@ -439,7 +439,7 @@ function notifyModerators(sheet, row, submissionId) {
     var submissionDeadline = sheet.getRange(row, CONFIG.COLUMNS.SUBMISSION_DEADLINE).getValue();
     var submitterEmail = sheet.getRange(row, CONFIG.COLUMNS.SUBMITTER_EMAIL).getValue();
 
-    var webAppUrl = ScriptApp.getService().getUrl();
+    var webAppUrl = CONFIG.WEB_APP_URL;
 
     // Generate secure moderation tokens for EACH moderator
     // Each moderator gets their own unique token bound to their email and submission ID

@@ -10,7 +10,8 @@
  * 2. Replace MODERATOR_1_EMAIL and MODERATOR_2_EMAIL with actual emails
  * 3. Replace VERIFICATION_SECRET with the generated secret
  * 4. Replace YOUR_SHEET_ID_HERE with your actual Google Sheet ID
- * 5. Update URLS when your website is live
+ * 5. After deploying, update WEB_APP_URL with the deployment URL
+ * 6. Update URLS when your website is live
  *
  * DO NOT commit production values to git!
  * See DEPLOYMENT.md for full instructions.
@@ -31,12 +32,18 @@ var CONFIG = {
   // Example: https://docs.google.com/spreadsheets/d/SHEET_ID_HERE/edit
   SHEET_ID: "YOUR_SHEET_ID_HERE",
 
+  // Web App URL (copy from deployment confirmation)
+  // IMPORTANT: Update this in Step 4 after deploying the web app
+  // Format: https://script.google.com/macros/s/DEPLOYMENT_ID/exec
+  // This ensures verification/moderation links always use the correct deployment
+  WEB_APP_URL: "PLACEHOLDER_UPDATE_AFTER_DEPLOYMENT",
+
   // Name of the sheet containing form responses
   // This is typically "Form Responses 1" or "Responses"
   RESPONSES_SHEET: "Form Responses 1",
 
   // Verification link expiry (days)
-  VERIFICATION_EXPIRY_DAYS: 7,
+  VERIFICATION_EXPIRY_DAYS: 30,
 
   // Column indices (1-based, as used by Apps Script)
   COLUMNS: {

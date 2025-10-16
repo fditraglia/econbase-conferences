@@ -288,17 +288,67 @@ When setting up the sheet, you must add the "Submission ID" column header at pos
 
 ---
 
+---
+
+## [P1] Incorrect Web App URL in Verification Emails (FIXED)
+
+### Issue
+Verification and moderation emails contained links with an incorrect deployment ID, causing users to see "Invalid action" or Drive errors when clicking links. The emails used an outdated web app URL instead of the current deployment's URL.
+
+### Root Cause
+`ScriptApp.getService().getUrl()` can return incorrect or stale URLs in certain situations:
+- When a script project has been copied or renamed
+- When multiple deployments exist (standalone vs. bound scripts)
+- When Apps Script caching returns an old deployment URL
+
+In this case, the bound script's `ScriptApp.getService().getUrl()` returned the URL of a previous standalone deployment instead of the current bound deployment.
+
+### Fix Applied
+1. **Added `WEB_APP_URL` constant to Config.gs:**
+   ```javascript
+   WEB_APP_URL: "https://script.google.com/macros/s/DEPLOYMENT_ID/exec",
+   ```
+
+2. **Updated Code.gs to use hardcoded URL:**
+   - Line 373 (sendVerificationEmail): Changed from `ScriptApp.getService().getUrl()` to `CONFIG.WEB_APP_URL`
+   - Line 442 (notifyModerators): Changed from `ScriptApp.getService().getUrl()` to `CONFIG.WEB_APP_URL`
+
+3. **Deployment workflow updated:**
+   - Step 4 now requires copying the Web App URL after deployment
+   - Config.gs must be updated with the actual URL before testing
+   - Documented in QUICKSTART.md Step 4
+
+### Security Properties
+- **Reliable links**: All verification and moderation links now use the correct, tested deployment URL
+- **No URL ambiguity**: Hardcoded value eliminates dependency on potentially unreliable runtime URL discovery
+- **Maintainable**: Clear documentation for updating URL when redeploying
+
+### Future Maintenance
+If the web app is ever redeployed:
+1. Copy the new Web App URL from Deploy → Manage deployments
+2. Update `WEB_APP_URL` in Config.gs
+3. Save the file
+4. Test with a form submission to verify links work
+
+### Code References
+- Config.gs WEB_APP_URL: `apps-script/Config.gs:39`
+- sendVerificationEmail: `apps-script/Code.gs:373`
+- notifyModerators: `apps-script/Code.gs:442`
+
+---
+
 ## Timeline
 
 - **Initial issues reported**: 2025-10-11
 - **Fix v1 implemented**: 2025-10-11 (incomplete - introduced new P0)
 - **Fix v2 implemented**: 2025-10-11 (complete - removed Session.getActiveUser() dependency)
 - **Fix v3 implemented**: 2025-10-11 (complete - stable submission IDs replace row-based tokens)
-- **Status**: Fixed, awaiting deployment testing
+- **Fix v4 implemented**: 2025-10-16 (complete - hardcoded WEB_APP_URL replaces unreliable ScriptApp.getService().getUrl())
+- **Status**: Fixed and deployed successfully
 
 ---
 
 ## Credit
 
-Issues identified by: Security review
+Issues identified by: Security review and deployment testing
 Fixes implemented by: Claude Code
