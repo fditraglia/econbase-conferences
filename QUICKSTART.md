@@ -66,8 +66,8 @@ Before starting, ensure you have:
    **Field 5: Website URL**
    - Type: Short answer
    - Required: Yes
-   - Validation: Enable "Response validation" → "Regular expression" → "Contains" → `^https?://`
-   - Error message: "Please enter a valid URL starting with http:// or https://"
+   - Validation: Enable "Response validation" → "Text" → "URL"
+   - Error message: "Please enter a valid URL"
 
    **Field 6: Brief Description**
    - Type: Paragraph
@@ -82,7 +82,7 @@ Before starting, ensure you have:
    **Field 8: Your Email Address**
    - Type: Short answer
    - Required: Yes
-   - Validation: Enable "Response validation" → "Regular expression" → "Email"
+   - Validation: Enable "Response validation" → "Text" → "Email"
    - Error message: "Please enter a valid email address"
 
 6. Click "Responses" tab → Click the Google Sheets icon → "Create a new spreadsheet"
